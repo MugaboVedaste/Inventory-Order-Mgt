@@ -39,9 +39,15 @@ FROM products
 WHERE name = 'Amagi (30)';
 
 -- 6. Calculate the order total from its details
+-- 6a. Apply bulk discounts to each line in this order
+UPDATE order_details
+SET discount_percent = fn_bulk_discount(quantity)
+WHERE order_id = @order_id;
+
+-- 6b. Calculate the order total after discounts
 UPDATE orders
 SET total_amount = (
-    SELECT SUM(quantity * unit_price)
+    SELECT ROUND(SUM(quantity * unit_price * (1 - discount_percent / 100)), 2)
     FROM order_details
     WHERE order_id = @order_id
 )
