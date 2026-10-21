@@ -7,7 +7,7 @@ START TRANSACTION;
 SET @customer_id = (
     SELECT customer_id
     FROM customers
-    WHERE email = 'vedasteapp@gmail.com'
+    WHERE email = 'alice.uwimana@example.com'
 );
 
 -- 2. Create the order
@@ -47,9 +47,23 @@ SET total_amount = (
 )
 WHERE order_id = @order_id;
 
+-- 7. Reduce stock for every item in the order (the trigger logs each change)
+SET @log_reason = 'Order';
+SET @log_order_id = @order_id;
+
+UPDATE products AS p
+JOIN order_details AS od
+    ON p.product_id = od.product_id
+SET p.stock_quantity = p.stock_quantity - od.quantity
+WHERE od.order_id = @order_id;
+
+-- Clear the variables so later changes aren't linked to this order
+SET @log_reason = NULL;
+SET @log_order_id = NULL;
+
 COMMIT;
 
--- 7. View the order summary
+-- 8. View the order summary
 SELECT
     o.order_id,
     c.name AS customer_name,
@@ -60,16 +74,20 @@ JOIN customers AS c
     ON o.customer_id = c.customer_id
 WHERE o.order_id = @order_id;
 
--- 8. View the products in the order
+-- 9. View the products in the order with their new stock
 SELECT
-	p.product_id,
+    p.product_id,
     p.name AS product_name,
     od.quantity,
     od.unit_price,
-    od.quantity * od.unit_price AS subtotal
+    od.quantity * od.unit_price AS subtotal,
+    p.stock_quantity AS stock_now
 FROM order_details AS od
 JOIN products AS p
     ON od.product_id = p.product_id
 WHERE od.order_id = @order_id;
 
-select * from inventory_logs;
+-- 10. View the inventory log entries for this order
+SELECT *
+FROM inventory_logs
+WHERE order_id = @order_id;
