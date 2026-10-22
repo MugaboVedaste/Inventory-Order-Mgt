@@ -5,7 +5,7 @@ orders, keeps stock levels correct when orders are placed, records every stock
 change for auditing, and provides reports on orders, low stock and customer
 spending.
 
-The project is a set of SQL scripts in [`sql/`](sql/). There is no application
+The project is a set of SQL scripts in [`sql/`](sql/), one folder per phase. There is no application
 code. You run the scripts in a MySQL client.
 
 ## Contents
@@ -21,13 +21,16 @@ code. You run the scripts in a MySQL client.
 
 ## What the system does
 
-| Phase | Goal | Where it is implemented |
-| --- | --- | --- |
-| 1. Schema | Tables, relationships and integrity rules | `01_database_schema.sql` |
-| 2. Orders and inventory | Place multi-product orders, deduct stock, log every change | `02_create_triggers.sql`, `03_sample_data.sql`, `06_place_order_transaction.sql` |
-| 3. Reporting | Order summaries, low-stock report, customer tiers, bulk discounts | `04`, `07`, `08`, `09` |
-| 4. Replenishment and automation | Automatic stock, totals, discounts and tiers; restock low products | `05_automation.sql`, `10_stock_replenishment.sql` |
-| 5. Views and performance | Order and low-stock views, indexes | `11_view_summary.sql`, `12_performance_optimization.sql` |
+| Phase | Goal | Folder | Scripts |
+| --- | --- | --- | --- |
+| 1. Schema | Tables, relationships and integrity rules | `phase1_schema/` | `01` |
+| 2. Orders and inventory | Place multi-product orders, deduct stock, log every change | `phase2_orders_inventory/` | `02`, `03`, `06` |
+| 3. Reporting | Order summaries, low-stock report, customer tiers, bulk discounts | `phase3_reporting/` | `04`, `07`, `08`, `09` |
+| 4. Replenishment and automation | Automatic stock, totals, discounts and tiers; restock low products | `phase4_replenishment_automation/` | `05`, `10` |
+| 5. Views and performance | Order and low-stock views, indexes | `phase5_views_performance/` | `11`, `12` |
+
+The numbers in the file names are the run order, which is not the same as the
+phase order (see [How to run it](#how-to-run-it)).
 
 ## Requirements
 
@@ -39,7 +42,9 @@ code. You run the scripts in a MySQL client.
 
 ## How to run it
 
-The scripts depend on each other, and the file numbers are the run order:
+The scripts depend on each other, and the file numbers are the run order. For
+example, the sample order in phase 2 needs the discount function from phase 3
+and the automation triggers from phase 4, so those run first.
 
 | Step | Script | What it does |
 | --- | --- | --- |
@@ -64,26 +69,19 @@ Ordering rules to keep in mind:
 
 ### Using the command line
 
-Start an interactive session and load each script with `source`. This works the
-same on Windows, macOS and Linux, and it keeps the selected database for
-scripts that do not select one themselves.
+Start an interactive session from the project root and run
+[`sql/run_all.sql`](sql/run_all.sql), which loads every script in the right
+order. This works the same on Windows, macOS and Linux, and it keeps the
+selected database for scripts that do not select one themselves.
 
 ```sql
 mysql -u root -p
 
-source sql/01_database_schema.sql;
-source sql/02_create_triggers.sql;
-source sql/03_sample_data.sql;
-source sql/04_bulk_discounts.sql;
-source sql/05_automation.sql;
-source sql/06_place_order_transaction.sql;
-source sql/07_order_summaries_per_customer.sql;
-source sql/08_low_stock_report.sql;
-source sql/09_customer_tiers_and_spending.sql;
-source sql/10_stock_replenishment.sql;
-source sql/11_view_summary.sql;
-source sql/12_performance_optimization.sql;
+source sql/run_all.sql;
 ```
+
+To run a single script, use its folder, for example
+`source sql/phase3_reporting/08_low_stock_report.sql;`.
 
 ### Starting over
 
@@ -98,7 +96,7 @@ DROP DATABASE inventory_order_management;
 ## Database schema
 
 Database name: `inventory_order_management` (InnoDB, defined in
-`01_database_schema.sql`).
+`phase1_schema/01_database_schema.sql`).
 
 ### Entity relationship diagram
 
@@ -216,10 +214,10 @@ erDiagram
 
 ## Scripts
 
-### `01_database_schema.sql`
+### `phase1_schema/01_database_schema.sql`
 Creates the database and the five tables described above.
 
-### `02_create_triggers.sql`
+### `phase2_orders_inventory/02_create_triggers.sql`
 Two triggers keep the inventory log up to date automatically:
 
 - `trg_products_after_insert`: when a product is added with stock above 0, logs
@@ -229,13 +227,13 @@ Two triggers keep the inventory log up to date automatically:
   `@log_reason` (default `Manual adjustment`) and the order from
   `@log_order_id`. A script sets these variables just before it changes stock.
 
-### `03_sample_data.sql`
+### `phase2_orders_inventory/03_sample_data.sql`
 Inserts 15 grocery products with Kinyarwanda names across the categories
 Ibiribwa (food), Imboga (vegetables), Imbuto (fruit), Ibinyobwa (drinks) and
 Isuku (cleaning), plus three customers: Jean Claude, Alice Uwimana and Eric
 Niyonzima.
 
-### `04_bulk_discounts.sql`
+### `phase3_reporting/04_bulk_discounts.sql`
 Creates `fn_bulk_discount(qty)`. It ends with a report of every order line that
 received a discount, which is empty until an order has a discounted line.
 
@@ -246,7 +244,7 @@ received a discount, which is empty until an order has a discounted line.
 | 20 to 49 | 10% |
 | 50 or more | 15% |
 
-### `05_automation.sql`
+### `phase4_replenishment_automation/05_automation.sql`
 Inserting a row into `order_details` is all that is needed to process a line.
 The script creates:
 
@@ -260,7 +258,7 @@ The script creates:
 - `trg_orders_after_insert` and `trg_orders_after_update`: refresh the tier when
   an order is created or its total changes.
 
-### `06_place_order_transaction.sql`
+### `phase2_orders_inventory/06_place_order_transaction.sql`
 Places an order inside one transaction. It only inserts rows; the triggers do
 the rest:
 
@@ -273,17 +271,17 @@ the rest:
    trigger), the ordered products with their new stock, and the matching log
    entries.
 
-### `07_order_summaries_per_customer.sql`
+### `phase3_reporting/07_order_summaries_per_customer.sql`
 Two queries: every order with its customer, number of item lines and total
 units, and one summary row per customer (number of orders, first and last
 order date, total spent, total units). Customers without orders do not appear.
 
-### `08_low_stock_report.sql`
+### `phase3_reporting/08_low_stock_report.sql`
 Report A lists products below their reorder level, with the shortage. Report B
 lists all products with a status of `OUT OF STOCK`, `REORDER NOW` or `OK`,
 sorted by urgency.
 
-### `09_customer_tiers_and_spending.sql`
+### `phase3_reporting/09_customer_tiers_and_spending.sql`
 Creates the view `vw_customer_spending` with each customer's order count, total
 spent, average order value, last order date and stored tier. Then it reports
 every customer and a summary per tier.
@@ -295,7 +293,7 @@ every customer and a summary per tier.
 | Bronze | Under 20,000 |
 | No orders | No orders yet |
 
-### `10_stock_replenishment.sql`
+### `phase4_replenishment_automation/10_stock_replenishment.sql`
 Creates two procedures. Both log the change as `Replenishment`.
 
 - `UpdateStock(product_id, quantity)`: adds the quantity to one product's stock.
@@ -303,7 +301,7 @@ Creates two procedures. Both log the change as `Replenishment`.
 - `ReplenishLowStock()`: finds every product below its reorder level, restocks
   it to twice its reorder level, and returns what was added.
 
-### `11_view_summary.sql`
+### `phase5_views_performance/11_view_summary.sql`
 Creates two views:
 
 - `order_summary`: order ID, customer name, order date, total amount and number
@@ -311,7 +309,7 @@ Creates two views:
 - `low_stock_products`: products that are out of stock or below their reorder
   level.
 
-### `12_performance_optimization.sql`
+### `phase5_views_performance/12_performance_optimization.sql`
 Creates indexes for the lookups and reports above: products by name and
 category, orders by customer and date, order lines by order and by product, and
 inventory logs by product, reason and date.
