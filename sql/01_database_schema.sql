@@ -30,7 +30,9 @@ CREATE TABLE IF NOT EXISTS customers (
     customer_id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(150) NOT NULL,
     email VARCHAR(255) NOT NULL UNIQUE,
-    phone VARCHAR(30) NULL
+    phone VARCHAR(30) NULL,
+    -- Kept up to date by triggers (see 05_automation.sql)
+    tier VARCHAR(20) NOT NULL DEFAULT 'No orders'
 ) ENGINE = InnoDB;
 
 
@@ -58,6 +60,8 @@ CREATE TABLE IF NOT EXISTS order_details (
     product_id INT NOT NULL,
     quantity INT NOT NULL,
     unit_price DECIMAL(10,2) NOT NULL,
+    -- Set by a trigger from the quantity (see 04_bulk_discounts.sql)
+    discount_percent DECIMAL(5,2) NOT NULL DEFAULT 0.00,
 
     PRIMARY KEY (order_id, product_id),
 

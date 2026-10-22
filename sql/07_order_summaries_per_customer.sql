@@ -1,4 +1,4 @@
-USE inventory_order_mgt;
+USE inventory_order_management;
 -- each order, grouped by customer
 SELECT
     c.customer_id,

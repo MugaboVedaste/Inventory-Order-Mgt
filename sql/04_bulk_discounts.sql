@@ -4,11 +4,9 @@
 -- 20 – 49	10%
 -- 50 or more	15%
 
--- Step 1: add a discount column and a function (run once)
+-- The discount function. order_details.discount_percent is created in
+-- 01_database_schema.sql and filled in by a trigger in 05_automation.sql.
 USE inventory_order_management;
-
-ALTER TABLE order_details
-    ADD COLUMN discount_percent DECIMAL(5,2) NOT NULL DEFAULT 0.00;
 
 DROP FUNCTION IF EXISTS fn_bulk_discount;
 

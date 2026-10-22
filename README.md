@@ -24,10 +24,10 @@ code. You run the scripts in a MySQL client.
 | Phase | Goal | Where it is implemented |
 | --- | --- | --- |
 | 1. Schema | Tables, relationships and integrity rules | `01_database_schema.sql` |
-| 2. Orders and inventory | Place multi-product orders, deduct stock, log every change | `02_create_triggers.sql`, `04_place_order_transaction.sql` |
-| 3. Reporting | Order summaries, low-stock report, customer tiers, bulk discounts | `05`, `06`, `07`, `08` |
-| 4. Replenishment | Add stock to products and log it | `09_stock_replenishment.sql` |
-| 5. Views and performance | Order and low-stock views, indexes | `10_view_summary.sql`, `11_performance_optimization.sql` |
+| 2. Orders and inventory | Place multi-product orders, deduct stock, log every change | `02_create_triggers.sql`, `03_sample_data.sql`, `06_place_order_transaction.sql` |
+| 3. Reporting | Order summaries, low-stock report, customer tiers, bulk discounts | `04`, `07`, `08`, `09` |
+| 4. Replenishment and automation | Automatic stock, totals, discounts and tiers; restock low products | `05_automation.sql`, `10_stock_replenishment.sql` |
+| 5. Views and performance | Order and low-stock views, indexes | `11_view_summary.sql`, `12_performance_optimization.sql` |
 
 ## Requirements
 
@@ -39,27 +39,28 @@ code. You run the scripts in a MySQL client.
 
 ## How to run it
 
-The scripts depend on each other, so the order matters. Run them in this order:
+The scripts depend on each other, and the file numbers are the run order:
 
 | Step | Script | What it does |
 | --- | --- | --- |
 | 1 | `01_database_schema.sql` | Creates the database and the five tables |
 | 2 | `02_create_triggers.sql` | Creates the stock-logging triggers |
 | 3 | `03_sample_data.sql` | Inserts 15 products and 3 customers |
-| 4 | `08_bulk_discounts.sql` | Adds `order_details.discount_percent` and `fn_bulk_discount()` |
-| 5 | `04_place_order_transaction.sql` | Places a sample order |
-| 6 | `05`, `06`, `07` | Reports and the `vw_customer_spending` view |
-| 7 | `09_stock_replenishment.sql` | Creates the `UpdateStock` procedure |
-| 8 | `10_view_summary.sql` | Creates the `order_summary` and `low_stock_products` views |
-| 9 | `11_performance_optimization.sql` | Creates indexes |
+| 4 | `04_bulk_discounts.sql` | Creates `fn_bulk_discount()` |
+| 5 | `05_automation.sql` | Creates the triggers that apply discounts, deduct stock, calculate totals and set customer tiers |
+| 6 | `06_place_order_transaction.sql` | Places a sample order |
+| 7 | `07`, `08`, `09` | Reports and the `vw_customer_spending` view |
+| 8 | `10_stock_replenishment.sql` | Creates the `UpdateStock` and `ReplenishLowStock` procedures |
+| 9 | `11_view_summary.sql` | Creates the `order_summary` and `low_stock_products` views |
+| 10 | `12_performance_optimization.sql` | Creates indexes |
 
-Two ordering rules to keep in mind:
+Ordering rules to keep in mind:
 
 - **Triggers before sample data (02 before 03).** Otherwise the sample products
   are inserted without an "Initial stock" entry in the inventory log.
-- **Discounts before the sample order (08 before 04).** The order script sets
-  `discount_percent` and calls `fn_bulk_discount()`, and both are created by
-  script 08. Without 08, step 6 of the order script fails.
+- **Discount function and automation before the sample order (04 and 05 before 06).**
+  The order script only inserts rows. The discount, stock deduction, order
+  total and customer tier all come from the triggers in script 05.
 
 ### Using the command line
 
@@ -73,20 +74,21 @@ mysql -u root -p
 source sql/01_database_schema.sql;
 source sql/02_create_triggers.sql;
 source sql/03_sample_data.sql;
-source sql/08_bulk_discounts.sql;
-source sql/04_place_order_transaction.sql;
-source sql/05_order_summaries_per_customer.sql;
-source sql/06_low_stock_report.sql;
-source sql/07_customer_tiers_and_spending.sql;
-source sql/09_stock_replenishment.sql;
-source sql/10_view_summary.sql;
-source sql/11_performance_optimization.sql;
+source sql/04_bulk_discounts.sql;
+source sql/05_automation.sql;
+source sql/06_place_order_transaction.sql;
+source sql/07_order_summaries_per_customer.sql;
+source sql/08_low_stock_report.sql;
+source sql/09_customer_tiers_and_spending.sql;
+source sql/10_stock_replenishment.sql;
+source sql/11_view_summary.sql;
+source sql/12_performance_optimization.sql;
 ```
 
 ### Starting over
 
-Most scripts cannot be run twice. Triggers, the column added in 08, the
-procedure, the views and the indexes already exist the second time. To reset,
+Most scripts cannot be run twice. Triggers, procedures, views and indexes
+already exist the second time. To reset,
 drop the database and run everything again from step 1:
 
 ```sql
@@ -113,6 +115,7 @@ erDiagram
         varchar name
         varchar email UK
         varchar phone
+        varchar tier "kept by triggers"
     }
     PRODUCTS {
         int product_id PK
@@ -133,7 +136,7 @@ erDiagram
         int product_id PK, FK
         int quantity
         decimal unit_price
-        decimal discount_percent "added by script 08"
+        decimal discount_percent "set by trigger"
     }
     INVENTORY_LOGS {
         bigint log_id PK
@@ -166,6 +169,7 @@ erDiagram
 | `name` | VARCHAR(150) | Required |
 | `email` | VARCHAR(255) | Required, unique |
 | `phone` | VARCHAR(30) | Optional |
+| `tier` | VARCHAR(20) | Default `No orders`. Kept up to date by triggers (script 05) |
 
 **`orders`**
 
@@ -184,7 +188,7 @@ erDiagram
 | `product_id` | INT, FK to `products` | Part of the primary key |
 | `quantity` | INT | Must be > 0 |
 | `unit_price` | DECIMAL(10,2) | Price at the time of the order, must be >= 0 |
-| `discount_percent` | DECIMAL(5,2) | Default 0.00. Added by script 08 |
+| `discount_percent` | DECIMAL(5,2) | Default 0.00. Set by a trigger from the quantity (script 05) |
 
 **`inventory_logs`**: an audit trail of every stock change.
 
@@ -231,44 +235,9 @@ Ibiribwa (food), Imboga (vegetables), Imbuto (fruit), Ibinyobwa (drinks) and
 Isuku (cleaning), plus three customers: Jean Claude, Alice Uwimana and Eric
 Niyonzima.
 
-### `04_place_order_transaction.sql`
-Places an order inside one transaction:
-
-1. Looks up the customer by email.
-2. Creates the order and saves its ID.
-3. Adds the order lines (soap x1, potatoes x2, eggs x1).
-4. Applies the bulk discount to each line with `fn_bulk_discount()`.
-5. Calculates `orders.total_amount` from the discounted lines.
-6. Deducts the stock. `@log_reason` and `@log_order_id` are set first, so the
-   trigger records each change as `Order` linked to this order.
-7. Commits, then shows the order summary, the ordered products with their new
-   stock, and the matching log entries.
-
-### `05_order_summaries_per_customer.sql`
-Two queries: every order with its customer, number of item lines and total
-units, and one summary row per customer (number of orders, first and last
-order date, total spent, total units). Customers without orders do not appear.
-
-### `06_low_stock_report.sql`
-Report A lists products below their reorder level, with the shortage. Report B
-lists all products with a status of `OUT OF STOCK`, `REORDER NOW` or `OK`,
-sorted by urgency.
-
-### `07_customer_tiers_and_spending.sql`
-Creates the view `vw_customer_spending` with each customer's order count, total
-spent, average order value, last order date and tier. Then it reports every
-customer and a summary per tier.
-
-| Tier | Total spent |
-| --- | --- |
-| Gold | 50,000 or more |
-| Silver | 20,000 to 49,999 |
-| Bronze | Under 20,000 |
-| No orders | No orders yet |
-
-### `08_bulk_discounts.sql`
-Adds `order_details.discount_percent` and creates `fn_bulk_discount(qty)`. It
-ends with a report of every order line that received a discount.
+### `04_bulk_discounts.sql`
+Creates `fn_bulk_discount(qty)`. It ends with a report of every order line that
+received a discount, which is empty until an order has a discounted line.
 
 | Quantity of one product | Discount |
 | --- | --- |
@@ -277,12 +246,64 @@ ends with a report of every order line that received a discount.
 | 20 to 49 | 10% |
 | 50 or more | 15% |
 
-### `09_stock_replenishment.sql`
-Creates the procedure `UpdateStock(product_id, quantity)`. It adds the quantity
-to a product's stock. It rejects a quantity of 0 or less, and a product that
-does not exist. The trigger logs the change.
+### `05_automation.sql`
+Inserting a row into `order_details` is all that is needed to process a line.
+The script creates:
 
-### `10_view_summary.sql`
+- `trg_order_details_before_insert`: sets `discount_percent` from the quantity.
+- `trg_order_details_after_insert`: deducts the stock (the products trigger from
+  script 02 logs it as `Order`, linked to the order) and recalculates
+  `orders.total_amount` from all lines. If there is not enough stock, the
+  `CHECK` on `products.stock_quantity` fails and the whole insert is rejected.
+- `fn_customer_tier(orders, total_spent)` and `sp_refresh_customer_tier(id)`:
+  work out a customer's tier and store it in `customers.tier`.
+- `trg_orders_after_insert` and `trg_orders_after_update`: refresh the tier when
+  an order is created or its total changes.
+
+### `06_place_order_transaction.sql`
+Places an order inside one transaction. It only inserts rows; the triggers do
+the rest:
+
+1. Looks up the customer by email.
+2. Creates the order and saves its ID.
+3. Adds the order lines (soap x1, potatoes x2, eggs x1). Each product is read
+   into variables first, because the trigger updates `products` and MySQL does
+   not allow that in a statement that also reads `products`.
+4. Commits, then shows the order summary (with the total calculated by the
+   trigger), the ordered products with their new stock, and the matching log
+   entries.
+
+### `07_order_summaries_per_customer.sql`
+Two queries: every order with its customer, number of item lines and total
+units, and one summary row per customer (number of orders, first and last
+order date, total spent, total units). Customers without orders do not appear.
+
+### `08_low_stock_report.sql`
+Report A lists products below their reorder level, with the shortage. Report B
+lists all products with a status of `OUT OF STOCK`, `REORDER NOW` or `OK`,
+sorted by urgency.
+
+### `09_customer_tiers_and_spending.sql`
+Creates the view `vw_customer_spending` with each customer's order count, total
+spent, average order value, last order date and stored tier. Then it reports
+every customer and a summary per tier.
+
+| Tier | Total spent |
+| --- | --- |
+| Gold | 50,000 or more |
+| Silver | 20,000 to 49,999 |
+| Bronze | Under 20,000 |
+| No orders | No orders yet |
+
+### `10_stock_replenishment.sql`
+Creates two procedures. Both log the change as `Replenishment`.
+
+- `UpdateStock(product_id, quantity)`: adds the quantity to one product's stock.
+  It rejects a quantity of 0 or less, and a product that does not exist.
+- `ReplenishLowStock()`: finds every product below its reorder level, restocks
+  it to twice its reorder level, and returns what was added.
+
+### `11_view_summary.sql`
 Creates two views:
 
 - `order_summary`: order ID, customer name, order date, total amount and number
@@ -290,18 +311,19 @@ Creates two views:
 - `low_stock_products`: products that are out of stock or below their reorder
   level.
 
-### `11_performance_optimization.sql`
+### `12_performance_optimization.sql`
 Creates indexes for the lookups and reports above: products by name and
 category, orders by customer and date, order lines by order and by product, and
 inventory logs by product, reason and date.
 
 ## Business rules
 
-- **Order total:** the sum of `quantity x unit_price x (1 - discount_percent / 100)`
+- **Order total:** calculated by a trigger as the sum of `quantity x unit_price x (1 - discount_percent / 100)`
   over the order's lines, rounded to 2 decimals.
 - **Unit price:** copied from `products.price` when the line is added, so later
   price changes do not alter past orders.
 - **Low stock:** a product is low when `stock_quantity < reorder_level`.
+- **Customer tier:** stored in `customers.tier` and refreshed by triggers.
 - **Inventory log:** every change to `stock_quantity` is logged by a trigger,
   with the reason and the order it came from when known.
 
@@ -324,15 +346,25 @@ UPDATE products SET stock_quantity = 5 WHERE name = 'Ikawa (250g)';
 
 SELECT * FROM low_stock_products;
 
--- Replenish it, logged as 'Replenishment'
-SET @log_reason = 'Replenishment';
+-- Restock every low product (logged as 'Replenishment')
+CALL ReplenishLowStock();
+
+-- Or restock one product
 CALL UpdateStock(13, 50);
-SET @log_reason = NULL;
 
 -- Full history for that product
 SELECT * FROM inventory_logs WHERE product_id = 13 ORDER BY created_at;
 ```
 
-To test bulk discounts, add lines of 10 or more units of one product to an
-order and run step 4 of the order script. For example, 20 units of one product
-gives 10% off that line.
+To test bulk discounts, insert an order line of 10 or more units of one product.
+The trigger sets the discount, so 20 units of one product gives 10% off that
+line, and the order total and customer tier update on their own.
+
+## Notes and limitations
+
+- The triggers handle new order lines only. Updating or deleting a line does
+  not change stock or the order total.
+- Stock is deducted when a line is inserted, so an order for more than is in
+  stock fails. Wrap an order in a transaction and roll back to undo it completely.
+- Triggers pass the log reason to the products trigger through the session
+  variables `@log_reason` and `@log_order_id`, and clear them afterwards.

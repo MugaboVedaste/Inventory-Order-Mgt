@@ -1,5 +1,7 @@
 USE inventory_order_management;
 
+-- The tier is stored in customers.tier and kept up to date by triggers
+-- (see 05_automation.sql), so the view only reads it.
 CREATE OR REPLACE VIEW vw_customer_spending AS
 SELECT
     c.customer_id,
@@ -9,16 +11,11 @@ SELECT
     COALESCE(SUM(o.total_amount), 0)    AS total_spent,
     COALESCE(AVG(o.total_amount), 0)    AS average_order_value,
     MAX(o.order_date)                   AS last_order_date,
-    CASE
-        WHEN COUNT(o.order_id) = 0           THEN 'No orders'
-        WHEN SUM(o.total_amount) >= 50000    THEN 'Gold'
-        WHEN SUM(o.total_amount) >= 20000    THEN 'Silver'
-        ELSE 'Bronze'
-    END AS tier
+    c.tier
 FROM customers AS c
 LEFT JOIN orders AS o
     ON c.customer_id = o.customer_id
-GROUP BY c.customer_id, c.name, c.email;
+GROUP BY c.customer_id, c.name, c.email, c.tier;
 
 
 -- Report A: every customer with their tier
